@@ -220,7 +220,7 @@ namespace HitBoxVisualizerPlugin
             // increase the loop count to get more free ManualLineGroups indicies.
             // this isn't the most scalable possible solution because index collisions need to be avoided but that's a fine enough tradeoff for what I'm doing.
             // this is still very scalable.
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 10; i++)
             {
                 ManualLineGroups.Add(new HitboxLineGroup([]));
             }
@@ -563,8 +563,10 @@ namespace HitBoxVisualizerPlugin
         [HarmonyPatch(nameof(DetPhysics.SimulateRopes_parallel))]
         public static void SimulateRopes_parallel_hook()
         {
-            Plugin.ManualLineGroups[0].groupLines.Clear();
-            Plugin.ManualLineGroups[1].groupLines.Clear();
+            for (int i = 0; i < 10; i++)
+            {
+                Plugin.ManualLineGroups[i].groupLines.Clear();
+            }
         }
 
         [HarmonyPrefix]
@@ -613,7 +615,8 @@ namespace HitBoxVisualizerPlugin
             
             for (int foo = 0; foo < body.segmentCount - 2; foo++)
             {
-                Plugin.ManualLineGroups[0].AddLine(new HitboxVisualizerLine(segment_copy[foo], segment_copy[foo + 1], YellowTransparent));
+                Plugin.ManualLineGroups[0].lineGroupStyle = lineDrawingStyle.debugDefault;
+                Plugin.ManualLineGroups[0].AddLine(new HitboxVisualizerLine(segment_copy[foo], segment_copy[foo + 1]));
             }
 
             Fix oneHalf = (Fix)0.5f;
@@ -649,6 +652,10 @@ namespace HitBoxVisualizerPlugin
                     vec7_normalized = vec7 / vec7Length;
                     segment_copy[body.segmentCount - 2] += fix5 * vec7_normalized * massEndOr1;
                     segment_copy[body.segmentCount - 1] -= fix5 * vec7_normalized * (Fix.One - massEndOr1);
+                }
+                for (int baz = 0; baz < body.segmentCount - 2; baz++)
+                {
+                    Plugin.ManualLineGroups[j + 2].AddLine(new HitboxVisualizerLine(segment_copy[baz], segment_copy[baz + 1], RedTransparent));
                 }
             }
 
@@ -776,6 +783,7 @@ namespace HitBoxVisualizerPlugin
 
         public static Color YellowTransparent  = new Color(1, 0.92f, 0.016f, 0.5f);
         public static Color GreenTransparent = new Color(0, 1, 0, 0.5f);
+        public static Color RedTransparent = new Color(1, 0, 0, 0.5f);
 
         public static Color transparent = new Color(1f, 1f, 1f, 0.4f);
         
