@@ -24,20 +24,21 @@ namespace HitBoxVisualizerPlugin
         // int is the instance ID
         public static Dictionary<int, DPhysicsBox> DPhysBoxDict = [];
         public static Dictionary<int, DPhysicsCircle> DPhysCircleDict = [];
-        public static Dictionary<int, Circle> CirlceDict = [];
+
+        //public static Dictionary<int, Circle> CirlceDict = [];
 
         public static HitboxLineGroup DebugLineGroup;
 
-        public static List<HitboxLineGroup> SingleTickLineGroup;
+        public static List<HitboxLineGroup> ManualLineGroups = [];
 
         public static ListOfLineHolderGameObjs poolOfLineHolderGameObjs = new ListOfLineHolderGameObjs();
 
         public ConfigEntry<float> CONFIG_drawingThickness;
         public ConfigEntry<float> CONFIG_debugLineLifetime;
 
-        public ConfigEntry<String> CONFIG_rectColors;
-        public ConfigEntry<String> CONFIG_circleColors;
-        public ConfigEntry<String> CONFIG_disabledColors;
+        public ConfigEntry<string> CONFIG_rectColors;
+        public ConfigEntry<string> CONFIG_circleColors;
+        public ConfigEntry<string> CONFIG_disabledColors;
 
         public ConfigEntry<bool> CONFIG_updateToNewDefaults;
         public ConfigEntry<string> CONFIG_lastConfigVersion;
@@ -58,7 +59,6 @@ namespace HitBoxVisualizerPlugin
             LineDrawing.setUpLineRendererMaterialToDefault();
             poolOfLineHolderGameObjs.SetAllLineRendererMaterials(LineDrawing.lineRendererBaseMaterial);
             DebugLineGroup = new HitboxLineGroup([], lineDrawingStyle.debugDefault);
-            SingleTickLineGroup = [];
 
             SceneManager.activeSceneChanged += OnSceneChange;
             loadConfigValues();
@@ -217,6 +217,13 @@ namespace HitBoxVisualizerPlugin
 
         public void Start()
         {
+            // increase the loop count to get more free ManualLineGroups indicies.
+            // this isn't the most scalable possible solution because index collisions need to be avoided but that's a fine enough tradeoff for what I'm doing.
+            // this is still very scalable.
+            for (int i = 0; i < 3; i++)
+            {
+                ManualLineGroups.Add(new HitboxLineGroup([]));
+            }
             // poolOfLineHolderGameObjs = new ListOfLineHolderGameObjs(); is redundant here, required after bopl 2.4.3+ for a non-zero minCapacity.
             // extra game objects are cleaned up at boot by unity in newer versions.
             poolOfLineHolderGameObjs = new ListOfLineHolderGameObjs();
@@ -259,16 +266,21 @@ namespace HitBoxVisualizerPlugin
         public void OnSceneChange(Scene current, Scene next)
         {
             DebugLineGroup.groupLines.Clear();
+            for (int i = 0; i < ManualLineGroups.Count; i++)
+            {
+                ManualLineGroups[i].groupLines.Clear();
+            }
         }
 
         public void updateHitboxes(float deltaSeconds)
         {
             Tuple<List<HitboxLineGroup>, List<HitboxLineGroup>> ListOflineGroupTuple = calculateHitBoxShapeComponentLines(DPhysBoxDict, DPhysCircleDict);
-            DebugLineGroup.TickLineLifetimes(deltaSeconds);
 
-            // rectangles + DebugLines
+            // rectangles + DebugLines + ManualLineGroups
             List<HitboxLineGroup> HitboxComponentLines_NoDistortion = ListOflineGroupTuple.Item1;
+            HitboxComponentLines_NoDistortion.AddRange(ManualLineGroups);
             HitboxComponentLines_NoDistortion.Add(DebugLineGroup);
+
             // circles
             // circles already have very little distortion (likely due to their much shallower turns at each point)
             // and would also cost a ton of extra line holder game objects to render with 1 game object per line.
@@ -276,8 +288,18 @@ namespace HitBoxVisualizerPlugin
             
             LineDrawing.drawLinesAsLineRendererPositions(HitboxComponentLines);
             LineDrawing.drawLinesIndividuallyWithHolderGameObjects(HitboxComponentLines_NoDistortion);
-        }
 
+            DebugLineGroup.TickLineLifetimes(deltaSeconds);
+            // I should probably add a flag to HitboxLineGroup for if the grouped lines can decay...
+            // then either remove or keep the flag on the individal lines themselves.
+            // looping through thousands of lines, even just quickly checking a flag before going to the next item,
+            // is wasteful when there are large groups that will never contain decaying lines.
+            // for now I'll just comment this out because at time of writing nothing in `ManualLineGroups` contians decaying lines.
+            /*for (int i = 0; i < ManualLineGroups.Count; i++)
+            {
+                ManualLineGroups[i].TickLineLifetimes(deltaSeconds);
+            }*/
+        }
 
         public Tuple<List<HitboxLineGroup>, List<HitboxLineGroup>> calculateHitBoxShapeComponentLines(Dictionary<int, DPhysicsBox> inputDPhysBoxDict, Dictionary<int, DPhysicsCircle> inputDPhysCircleDict)
         {
@@ -393,8 +415,8 @@ namespace HitBoxVisualizerPlugin
                 float angleDifferencePerIteration = 360f / (float)circleLineAmount;
 
                 List<HitboxVisualizerLine> currCircleLines = [];
-                // setup the initial first position so the loop can be simpler
-                // also yeah this just simplies down due to cos(0) = 1 and sin(0) = 0
+                // setup the initial first position so the loop can be simpler.
+                // also yeah this just simplifies down because cos(0) = 1 and sin(0) = 0.
                 Vec2 nextStartingCirclePoint = new Vec2(circleX+circleRadius, circleY);
 
                 // yes, j = 1 because nextStartingCirclePoint is already set.
@@ -533,6 +555,122 @@ namespace HitBoxVisualizerPlugin
     //     }
     // }
 
+    // making a transpiler patch would be a ton of effort, so I'll just do this instead.
+    [HarmonyPatch(typeof(DetPhysics))]
+    class DetPhysicsPatches
+    {
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(DetPhysics.SimulateRopes_parallel))]
+        public static void SimulateRopes_parallel_hook()
+        {
+            Plugin.ManualLineGroups[0].groupLines.Clear();
+            Plugin.ManualLineGroups[1].groupLines.Clear();
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(DetPhysics.SimulateRope))]
+        public static void SimulateRope_functionHook(/*DetPhysics __instance, */LevelType ___levelTypeThisFrame, RopeBody body)
+        {
+            List<Vec2> segment_copy = body.segment.ToList();
+            List<Vec2> segmentPrev_copy = body.segmentPrev.ToList();
+            if (!body.enabled || body.timeInAir_end == (Fix)100)
+            {
+                return;
+            }
+            Vec2 vec;
+            Vec2 vec2;
+            Fix massStartOr1;
+            Fix massEndOr1;
+            if (body.hookHasArrived)
+            {
+                vec = body.force_start;
+                vec2 = body.force_end;
+                massStartOr1 = body.mass_start;
+                massEndOr1 = body.mass_end;
+            }
+            else
+            {
+                vec = Vec2.zero;
+                vec2 = Vec2.zero;
+                massStartOr1 = Fix.One;
+                massEndOr1 = Fix.One;
+            }
+            Vec2 vec3 = Vec2.down * DetPhysics.Get().ropeGravity * ((___levelTypeThisFrame == LevelType.space) ? ((Fix)0.5) : Fix.One);
+            int num = body.segmentCount - 1;
+            Vec2 vec4 = segment_copy[0];
+            segment_copy[0] = (Fix)2L * segment_copy[0] - segmentPrev_copy[0] + GameTime.FixedTimeStep * vec;
+            segmentPrev_copy[0] = vec4;
+            _ = Fix.One / (Fix)num;
+            for (int i = 1; i < num; i++)
+            {
+                Vec2 vec5 = segment_copy[i];
+                segment_copy[i] = (Fix)2L * segment_copy[i] - segmentPrev_copy[i] + GameTime.FixedTimeStep * vec3;
+                segmentPrev_copy[i] = vec5;
+            }
+            Vec2 vec6 = segment_copy[num];
+            segment_copy[num] = (Fix)2L * segment_copy[num] - segmentPrev_copy[num] + GameTime.FixedTimeStep * vec2;
+            segmentPrev_copy[num] = vec6;
+            
+            for (int foo = 0; foo < body.segmentCount - 2; foo++)
+            {
+                Plugin.ManualLineGroups[0].AddLine(new HitboxVisualizerLine(segment_copy[foo], segment_copy[foo + 1], YellowTransparent));
+            }
+
+            Fix oneHalf = (Fix)0.5f;
+            for (int j = 0; j < DetPhysics.Get().ropeRelaxationIterations; j++)
+            {
+                Vec2 vec7 = segment_copy[1] - segment_copy[0];
+                Fix vec7Length = Vec2.Magnitude(vec7);
+                if (vec7Length == Fix.Zero)
+                {
+                    continue;
+                }
+                Fix fix5 = -vec7Length;
+                Vec2 vec7_normalized = vec7 / vec7Length;
+                segment_copy[1] += fix5 * vec7_normalized * massStartOr1;
+                segment_copy[0] -= fix5 * vec7_normalized * (Fix.One - massStartOr1);
+                for (int k = 1; k < body.segmentCount - 2; k++)
+                {
+                    vec7 = segment_copy[k] - segment_copy[k + 1];
+                    vec7Length = Vec2.Magnitude(vec7);
+                    if (!(vec7Length == Fix.Zero))
+                    {
+                        fix5 = body.segmentSeparation - vec7Length;
+                        vec7_normalized = vec7 / vec7Length;
+                        segment_copy[k] += fix5 * vec7_normalized * oneHalf;
+                        segment_copy[k + 1] -= fix5 * vec7_normalized * oneHalf;
+                    }
+                }
+                vec7 = segment_copy[body.segmentCount - 2] - segment_copy[body.segmentCount - 1];
+                vec7Length = Vec2.Magnitude(vec7);
+                if (!(vec7Length == Fix.Zero))
+                {
+                    fix5 = -vec7Length;
+                    vec7_normalized = vec7 / vec7Length;
+                    segment_copy[body.segmentCount - 2] += fix5 * vec7_normalized * massEndOr1;
+                    segment_copy[body.segmentCount - 1] -= fix5 * vec7_normalized * (Fix.One - massEndOr1);
+                }
+            }
+
+
+
+
+
+
+            // TODO: add back in the platform collison stuff that's here in the original function
+
+
+
+
+
+
+            for (int bar = 0; bar < body.segmentCount - 2; bar++)
+            {
+                Plugin.ManualLineGroups[1].AddLine(new HitboxVisualizerLine(segment_copy[bar], segment_copy[bar + 1], GreenTransparent));
+            }
+        }
+    }
+
     public class ListOfLineHolderGameObjs
     {
         public List<GameObject> gameObjsList = new List<GameObject>();
@@ -636,13 +774,22 @@ namespace HitBoxVisualizerPlugin
         public static Color DarkGrey     = new Color(0.2f, 0.2f, 0.2f, 1f);
         public static Color lightGrey    = new Color(0.8f, 0.8f, 0.8f, 1f);
 
+        public static Color YellowTransparent  = new Color(1, 0.92f, 0.016f, 0.5f);
+        public static Color GreenTransparent = new Color(0, 1, 0, 0.5f);
+
         public static Color transparent = new Color(1f, 1f, 1f, 0.4f);
+        
         public enum lineDrawingStyle
         {
             defaultColors,
             disabledPhys,
             circleColors,
-            debugDefault/*,
+            debugDefault,
+            /// <summary>
+            /// use `lineDrawingStyle.manual` when you want to assign all of the line colors manually.
+            /// </summary>
+            manual 
+            /*,
             UpdateWithoutLateUpdate*/
         }
         public static Dictionary<lineDrawingStyle, List<Color>> drawingStyleToLineColors = new Dictionary<lineDrawingStyle, List<Color>>
@@ -650,7 +797,8 @@ namespace HitBoxVisualizerPlugin
             {lineDrawingStyle.defaultColors, [RedColor, YellowColor, GreenColor, BlueColor, MagentaColor]},
             {lineDrawingStyle.disabledPhys, [BlackColor, WhiteColor]},
             {lineDrawingStyle.circleColors, [RedColor, YellowColor, GreenColor, BlueColor, MagentaColor]},
-            {lineDrawingStyle.debugDefault, [MagentaColor, lightGrey, DarkGrey]}
+            {lineDrawingStyle.debugDefault, [MagentaColor, lightGrey, DarkGrey]},
+            {lineDrawingStyle.manual, []}
             /*{lineDrawingStyle.UpdateWithoutLateUpdate, [MagentaColor, MagentaColor, MagentaColor, MagentaColor] }*/
         };
     }
@@ -663,11 +811,19 @@ namespace HitBoxVisualizerPlugin
         // ideally i would put this in a subclass but doing that would mean I also couldn't use all the stuff built around HitboxLineGroup for those lines
         public bool hasLifeTimeout = false;
         public float lifetimeSeconds = 1.5f; // same length as XGunExplosion, thus lasting as long as the explosion hitbox does visually.
-        public float ageSeconds = 0f;
+
         public HitboxVisualizerLine(Vec2 point_1, Vec2 point_2)
         {
             point1 = point_1;
             point2 = point_2;
+        }
+        public HitboxVisualizerLine(Vec2 point_1, Vec2 point_2, Color color) : this(point_1, point_2)
+        {
+            lineColor = color;
+        }
+        public HitboxVisualizerLine(Vec2 point_1, Vec2 point_2, Color color, float drawSeconds_) : this(point_1, point_2, drawSeconds_)
+        {
+            lineColor = color;
         }
         public HitboxVisualizerLine(Vec2 point_1, Vec2 dir, Fix distance)
         {
@@ -718,6 +874,13 @@ namespace HitBoxVisualizerPlugin
             UpdateLineColorsToMatchStyle(lineStyle);
         }
 
+        public HitboxLineGroup(List<HitboxVisualizerLine> hitboxLines)
+        {
+            groupLines = hitboxLines;
+            parentGameObj = null;
+            lineGroupStyle = lineDrawingStyle.manual;
+        }
+
         public void AddLine(HitboxVisualizerLine line)
         {
             groupLines.Add(line);
@@ -730,8 +893,8 @@ namespace HitBoxVisualizerPlugin
             {
                 if (groupLines[i].hasLifeTimeout)
                 {
-                    groupLines[i].ageSeconds += deltaSeconds;
-                    if (groupLines[i].ageSeconds > groupLines[i].lifetimeSeconds)
+                    groupLines[i].lifetimeSeconds -= deltaSeconds;
+                    if (groupLines[i].lifetimeSeconds <= 0)
                     {
                         groupLines.RemoveAt(i);
                     }
@@ -754,12 +917,20 @@ namespace HitBoxVisualizerPlugin
 
         public void UpdateOneLineColorToMatchStyle(lineDrawingStyle lineStyle, int lineIndex)
         {
+            if (lineStyle == lineDrawingStyle.manual)
+            {
+                return;
+            }
             var lineStyleColors = drawingStyleToLineColors[lineStyle];
             groupLines[lineIndex].lineColor = lineStyleColors[(groupLines.Count - 1) % (lineStyleColors.Count)];
         }
 
         public void UpdateLineColorsToMatchStyle(lineDrawingStyle lineStyle)
         {
+            if (lineStyle == lineDrawingStyle.manual)
+            {
+                return;
+            }
             lineGroupStyle = lineStyle;
             var colorIndex = 0;
             var lineColors = drawingStyleToLineColors[lineGroupStyle];
@@ -896,7 +1067,7 @@ namespace HitBoxVisualizerPlugin
                 }
             }
             // clean up any unused game objects
-            if ((amountOfUsedHolderObjs < holderGameObjs.gameObjsList.Count))
+            if (amountOfUsedHolderObjs < holderGameObjs.gameObjsList.Count)
             {
                 if (amountOfUsedHolderObjs > holderGameObjs.minCapacity)
                 {
@@ -909,6 +1080,7 @@ namespace HitBoxVisualizerPlugin
             }
             // clear LineRenderer positions on any unused gameObjects, so that we don't get old lines still displaying on screen.
             holderGameObjs.CleanUpOldLineRendererPositionsFromGameObjsAfter(amountOfUsedHolderObjs);
+            //Plugin.Logger.LogInfo("amount of GameObjects being used: " + holderGameObjs.gameObjsList.Count);
         }
     }
 }
