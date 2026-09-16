@@ -224,6 +224,7 @@ namespace HitBoxVisualizerPlugin
             {
                 ManualLineGroups.Add(new HitboxLineGroup([]));
             }
+            Plugin.ManualLineGroups[8].lineGroupStyle = lineDrawingStyle.debugDefault;
             // poolOfLineHolderGameObjs = new ListOfLineHolderGameObjs(); is redundant here, required after bopl 2.4.3+ for a non-zero minCapacity.
             // extra game objects are cleaned up at boot by unity in newer versions.
             poolOfLineHolderGameObjs = new ListOfLineHolderGameObjs();
@@ -615,8 +616,7 @@ namespace HitBoxVisualizerPlugin
             
             for (int foo = 0; foo < body.segmentCount - 2; foo++)
             {
-                Plugin.ManualLineGroups[0].lineGroupStyle = lineDrawingStyle.debugDefault;
-                Plugin.ManualLineGroups[0].AddLine(new HitboxVisualizerLine(segment_copy[foo], segment_copy[foo + 1]));
+                Plugin.ManualLineGroups[8].AddLine(new HitboxVisualizerLine(segment_copy[foo], segment_copy[foo + 1]));
             }
 
             Fix oneHalf = (Fix)0.5f;
@@ -655,7 +655,7 @@ namespace HitBoxVisualizerPlugin
                 }
                 for (int baz = 0; baz < body.segmentCount - 2; baz++)
                 {
-                    Plugin.ManualLineGroups[j + 2].AddLine(new HitboxVisualizerLine(segment_copy[baz], segment_copy[baz + 1], RedTransparent));
+                    Plugin.ManualLineGroups[j].AddLine(new HitboxVisualizerLine(segment_copy[baz], segment_copy[baz + 1], RedTransparent));
                 }
             }
 
@@ -673,7 +673,7 @@ namespace HitBoxVisualizerPlugin
 
             for (int bar = 0; bar < body.segmentCount - 2; bar++)
             {
-                Plugin.ManualLineGroups[1].AddLine(new HitboxVisualizerLine(segment_copy[bar], segment_copy[bar + 1], GreenTransparent));
+                Plugin.ManualLineGroups[9].AddLine(new HitboxVisualizerLine(segment_copy[bar], segment_copy[bar + 1], GreenTransparent));
             }
         }
     }
@@ -783,7 +783,7 @@ namespace HitBoxVisualizerPlugin
 
         public static Color YellowTransparent  = new Color(1, 0.92f, 0.016f, 0.5f);
         public static Color GreenTransparent = new Color(0, 1, 0, 0.5f);
-        public static Color RedTransparent = new Color(1, 0, 0, 0.5f);
+        public static Color RedTransparent = new Color(1, 0, 0, 0.2f);
 
         public static Color transparent = new Color(1f, 1f, 1f, 0.4f);
         
